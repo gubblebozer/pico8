@@ -1,18 +1,23 @@
 pico-8 cartridge // http://www.pico-8.com
 version 8
 __lua__
-jmp = {  3, 3, 2, 2, 2, 1, 1, 1,
-         0, 1, 0, 1, 0, 1, 0 }
-g = { x=0, y=0, s=1,
+g = { x=0, y=0,
       f=0, fb=54, fn=4, 
-      jf=0, jv=0, 
-      gold=0, sword=0,
+      gold=0,
+      sword=0,
       life=3,
-      vx=0, vy=0
+      vx=0, vy=0,
 }
 c = { x=0, y=-32 }
 accel = 0.2
 vmax = 1.5
+grav=0.4
+gravmax=2.5
+jumpvec=-4
+rejump_frm=10
+enterexit_frm=60 -- essentially, infinite
+
+debtbl={ }
 
 room={ }
 
@@ -74,7 +79,6 @@ health = {
 }
 
 sword = { cx=6,cy=20,r=2 }
-b4_lat=false
 frm=0 -- frame
 sec=0
 
@@ -107,17 +111,39 @@ function ceil(num)
   return flr(num+0x0.ffff)
 end
 
+-- specify duration in frames
+function timer_expired(tmr, dur)
+ if frm < tmr then
+  return true
+ else
+  return (frm - tmr) >= dur
+ end
+end
+
+-- "de-bounce" a button
+--
+-- returns a button press at most once every "dur" frames.
+-- if button is released, timer is reset.
+-- use a long duration for a latching function.
+function debounce(bn, dur)
+ if btn(bn) then
+  if timer_expired(debtbl[bn], dur) then
+   debtbl[bn]=frm
+   return true
+  else
+   return false
+  end
+ else
+  debtbl[bn]=0
+  return false
+ end
+end
+
 function friction(v)
  if v < 0 then v += accel end
  if v > 0 then v -= accel end
  if v > -accel and v < accel then v = 0 end
  return v
-end
-
-function pushoff(v)
- if v <= -accel then return  accel end
- if v >=  accel then return -accel end
- return 0
 end
 
 function enter_exit()
@@ -159,19 +185,50 @@ end
 
 -- test collision between player and map tiles.
 --
--- tests whether each corner of the player's 8x8 is in a solid map tile
--- (flag=1).
+-- tests the midpoints of the four sides of the player's square.
 function map_collision(x, y)
- fx1=flr(x/8)
- fx2=flr((x+7)/8)
- fy1=flr(y/8)
- fy2=flr((y+7)/8)
+ xa=flr(x/8)
+ xb=flr((x+4)/8)
+ xc=flr((x+7)/8)
+ ya=flr(y/8)
+ yb=flr((y+4)/8)
+ yc=flr((y+7)/8)
 
- return
-  fget(mget(fx1,fy1), 1) or
-  fget(mget(fx2,fy1), 1) or
-  fget(mget(fx1,fy2), 1) or
-  fget(mget(fx2,fy2), 1)
+ if fget(mget(xb,ya), 1) then -- top
+  y=(ya+1)*8
+  g.vy=0
+ end
+ if fget(mget(xa,yb), 1) then -- left
+  x=(xa+1)*8
+  g.vx=0
+ end
+ if fget(mget(xb,yc), 1) then -- bottom
+  y=(yc-1)*8
+  g.vy=0
+ end
+ if fget(mget(xc,yb), 1) then -- left
+  x=(xc-1)*8
+  g.vx=0
+ end
+
+ return x,y
+end
+
+-- returns true if player is not in the air
+function on_platform(x, y)
+ xb=flr((x+4)/8)
+ ya=flr(y/8)
+ return fget(mget(xb,ya+1), 1)
+end
+
+function settle(x)
+ return round(x*10)/10
+end
+
+function settle_obj(o)
+ for k,v in pairs(o) do
+  o[k] = settle(v)
+ end
 end
 
 function camera_move(tx,ty,vx,vy)
@@ -190,7 +247,6 @@ end
 
 function guy_move()
  ax=0
- ay=0
 
  -- accel based on input
  if btn(0) then --left
@@ -199,41 +255,36 @@ function guy_move()
  if btn(1) then --right
   ax= accel
  end
- if btn(2) then --up
-  ay=-accel
- end
- if btn(3) then --down
-  ay= accel
- end
+ -- if btn(3) then --down
+ --  ay= accel
+ -- end
+ -- if btn(5) then --attack
+ -- end
 
- -- action button
- if btn(4) then
-  if not b4_lat then
-   b4_lat=true
+ -- enter/exit button (up)
+ if debounce(2, enterexit_frm) then
    enter_exit()
-  end
- else
-  b4_lat=false
  end 
  
  g.vx+=ax
- g.vy+=ay
  if ax == 0 then g.vx=friction(g.vx) end
- if ay == 0 then g.vy=friction(g.vy) end
  if g.vx < -vmax then g.vx=-vmax end
  if g.vx >  vmax then g.vx= vmax end
- if g.vy < -vmax then g.vy=-vmax end
- if g.vy >  vmax then g.vy= vmax end
+
+ -- jump (up)
+ if btn(4) and on_platform(g.x,g.y) and debounce(4, rejump_frm) then
+  g.vy=jumpvec
+  sfx(002)
+ end
+
+ -- gravity
+ g.vy+=grav
+ if g.vy > gravmax then g.vy=gravmax end
 
  -- collision with map?
  tx=g.x+g.vx
  ty=g.y+g.vy
- if map_collision(tx,ty) then
-  g.vx=pushoff(g.vx)
-  g.vy=pushoff(g.vy)
-  tx=g.x+g.vx
-  ty=g.y+g.vy
- end
+ tx,ty = map_collision(tx,ty)
 
  -- test room boundaries
  if tx < r.dx1 then
@@ -256,22 +307,7 @@ function guy_move()
  camera_move(g.x,g.y,g.vx,g.vy)
  g.x=tx
  g.y=ty
-
- -- jump (xxx)
- if btn(5) and g.jv==0 then -- jump
-  g.jv=1
-  sfx(002)
- end
- if g.jf==15 then g.jv=-1 end
- if g.jv~=0 then
-  g.jf+=g.jv
-  if g.jf<=0 then 
-   g.jf=0
-   g.jv=0
-  else
-   g.y+=-g.jv*jmp[g.jf]
-  end
- end
+ settle_obj(g)
 
  g.cx=round(g.x/8)
  g.cy=round(g.y/8)
@@ -279,7 +315,7 @@ function guy_move()
 end
 
 function guy_draw()
- if btn(0) or btn(1) or btn(2) or btn(3) then
+ if btn(0) or btn(1) then
   g.f+=1
  end
  if g.f/2 >= g.fn then
@@ -344,6 +380,9 @@ function _init()
  palt(2, true)
  palt(0, false)
  sfx(001)
+ for i=0,6 do
+  debtbl[i]=0
+ end
 end
 
 function _update()
@@ -373,14 +412,14 @@ function _draw()
  stuff_draw()
  
  camera()
- print(g.x .. ", " .. g.y .. " (" .. g.cx .. ", " .. g.cy .. ")", 0, 0)
+ print("c: " .. g.cx .. ", " .. g.cy)
+ print("n: " .. g.x .. ", " .. g.y)
+ print("v: " .. g.vx .. ", " .. g.vy)
  print("\n" .. r.name)
  inventory()
  
- if (g.f==1 or g.f==3) and 
-     g.jf==0 and (btn(0) or btn(1)) 
-     then sfx(000)
- end
+ if (g.f==1 or g.f==3) and (btn(0) or btn(1)) then sfx(000) end
+
 end
 
 __gfx__
@@ -643,7 +682,7 @@ __label__
 88888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888
 
 __gff__
-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002020202020200020002020000000000020202020202000002000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002020202020200020002020000000000020202020202000002000202000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __map__
 2020202020202020202020202020202020202020202020202020202020202020202000000000000000000000000000004445424342434243424342434243444041404140414041404141434350510000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
