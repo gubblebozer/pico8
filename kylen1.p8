@@ -63,8 +63,8 @@ room[4] = {
  x=36*8, y=9*8,
  w=nil, h=nil,
  cx=32*8, cy=10*8,
- -- sx=37*8, sy=16*8,
- sx=69*8,sy=5*8,
+ sx=37*8, sy=16*8,
+ --sx=69*8,sy=5*8,
  dx1=36*8,dx2=127*8,
  dy1=0,dy2=31*8,
 }
@@ -381,9 +381,9 @@ function guy_move()
  end
 
  settle_obj(g)
- camera_move(g.x,g.y,g.vx,g.vy)
  g.x=tx
  g.y=ty
+ camera_move(g.x,g.y,g.vx,g.vy)
 
  g.cx=round(g.x/8)
  g.cy=round(g.y/8)
@@ -534,7 +534,7 @@ function collect()
 end
 
 function reset()
- room_set(4)
+ room_set(1)
  sfx(001)
  g.life=3
  g.lava=false
